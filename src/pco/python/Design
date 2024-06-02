@@ -1,0 +1,307 @@
+﻿
+Parameter
+ - type_info: TypeInfo
+ - is_const:
+
+ PreCompiledTargetParameter
+   - target: PreCompiledTargetConfiguration
+   - is_const:
+
+TypeInfo
+  - type_name
+  - is_native
+  - user_defined_object_type_info
+    - header
+    - namespace
+
+NativeValue
+  - type_info: TypeInfo
+  - value
+
+PreCompiledUnitRoutingCell
+  - parameter: Parameter
+  - type_index: int
+  - value: TypeInfo|NativeValue
+
+PreCompiledUnitRoutingTable
+  - target: PreCompiledTargetConfiguration
+  - constructor: PreCompiledTargetConstructor
+  - rows: PreCompiledUnitRoutingCell[][]
+  - compiled_type_signatures: list[str]
+
+MaterializedPreCompiledTargetConfiguration
+  - config: PreCompiledTargetConfiguration
+  - tables: PreCompiledUnitRoutingTable[]
+
+PreCompiledTargetBuildConfiguration
+  - base_dir_path
+  - type index start
+  - null_type_class_name
+  - null_type_header
+  - dont_care_type_class_name
+  - dont_care_type_header
+
+PreCompiledTargetConstructor
+  - target: PreCompiledTargetConfiguration
+  - name: str
+  - parameters: Map<Parameter, TypeInfo|NativeValue|PreCompiledTargetParameter[]>
+  - custom_parameters: Parameter[]
+
+PreCompiledTargetConfiguration
+  - target_interface: TypeInfo
+  - target: TypeInfo
+  - parameters: Parameter[]
+  - headers_to_include: list[str]
+  - constructors: list[PreCompiledTargetConstructor]
+  - generated_headers
+    - factory_header: str
+    - factory_impl_cpp: str
+
+
+
+//
+// Functions
+//
+
+materialize_pre_compiled_targets(target: list[PreCompiledTargetConfiguration])
+  - returns: list[MaterializedPreCompiledTargetConfiguration]
+  - what this does:
+    - build a routing table for each config
+      1. Sort each target configs using topological search.
+      2. Assign index numbers to those native values.
+      3. Using the output of "1", execute following logics per each target config.
+        3.1. Make a table, but each cell still not does not hold any essential infos yet.
+        3.2. Assign index numbers to non-native types.
+        3.3. Fill `compiled_type_signatures`.
+
+generate_sources(list[MaterializedPreCompiledTargetConfiguration])
+  1. Find 'Key':  {int0, int1, ...} -> Key
+  2. Given Table = Key -> (PT_1* param0,
+                           PT_2* param1,
+                           ...,
+                           [const] CV1*|& custom_param0,
+                           [const] CV2*|& custom_param1,
+                           ...) -> {
+       new TC<AT_1_1, AT_2_1, ..., NV_1_1, NV_2_1, ...>(
+             (AT_1_1*) param0,
+             (AT_2_1*) param1,
+             ...
+             custom_param0,
+             custom_param1,
+             ...
+             ); }
+    2.1. Generate type index header files.
+      - use `PcoTypeIndexSupportFor{Type name}`.
+      - then put the output under `dest_dir_path/type_index_dir_name`.
+      - for those native types + values, flush specifications into
+      `PcoTYpeIndexSupportForPrimitiveTypes.hpp` file under the same directory.
+      Ex: template<>
+          struct PcoTypeIndex<T> {
+            static const int32_t INDEX = X;
+          };
+    Ex: template <typename T>
+        struct TypeIndex;
+
+        template <>
+        struct TypeIndex<AT> {
+          static const int INDEX = X;
+        };
+
+    2.2. Generate factory header.
+      - {TC}PcoFactory.hpp
+      {TC}PcoFactory::build(PI1, PI2, ..., NV1, NV2, ..., CV1, CV2) -> TCI (=TC<...>)
+
+    2.3. Build a hash function. <- let's call this as HF_Composite<TC>.
+         This will be used during the runtime.
+    2.4. Build a hash function maps Key acquired at step 2.3. to index to a table.
+         <- let's call this as HF_Index<TC>
+         if it returned a negative number, it means no adequate specification was found,
+         indicating we should fallback to the default.
+    2.5. Generate factory implementation.
+      - {TC}PcoFactory.cpp
+      1. add assertions that every non-native types are inheriting PcoTypeIndexSupport.
+      2. Get 'Key' to the routing table.
+        - Key <- HF_Composite<TC>::get_composite_key(
+                   ((PcoTypeIndexSupport *) param1)->type_index,
+                   ((PcoTypeIndexSupport *) param2)->type_index,
+                   ...,
+                   PrimitivePcoTypeIndex<NT_1>::get_type_index(NV_1),
+                   PrimitivePcoTypeIndex<NT_2>::get_type_index(NV_2),
+                   ...
+                 );
+      3. Get a factory and make TCI instance using the given allocator.
+        - TCI = {TC}PcoFactory::build_internal(HF_Index<TC>::get(Key),
+                                               allocator,
+                                               param1, param2, ...,
+                                               nv1, nv2, ...,
+                                               cv1, cv2, ...);
+
+
+//
+// PCO Lib
+//
+
+- pco type index.
+- pco type index support.
+- factory
+
+
+//
+// Client side (the places that use PCO lib)
+//
+
+Headers
+  - type index
+  - factory
+Cpp
+  - factory
+
+## Type index
+
+```
+#include <.../type index header>
+
+Foo()
+  : PcoTypeIndexSupport(PcoTypeIndex<Foo>::INDEX),
+    ...
+```
+
+## Factory
+
+```
+#include <.../factory header>
+
+PcoTargetClassFactoryOfFoo::create(allocator, ...);
+```
+
+//
+// Auto-gen sources
+//
+
+- unified type index cpp -> global.
+  - native type index
+  - object type index
+- factory header for each target classe.
+- factory cpp impl for each target classes.
+  - header + namespace
+  - table
+  - hash
+  - factory impl
+
+
+//
+// Generation Logic
+//
+
+target files:
+1. type index (global)
+2. factory per each target class
+
+
+## 1. Native global type index
+destination: put generated files under `PreCompiledTargetBuildConfiguration::type_index_dir_name`
+class name: NativeTypeIndexMapping
+
+1. Build native type id info first. Hence type indices are firstly assigned to native types at the beginning.
+Supported native types are:
+  - int8_t
+  - int16_t
+  - int32_t
+  - int64_t
+  - uint8_t
+  - uint16_t
+  - uint32_t
+  - uint64_t
+  - bool
+  - null pointer
+
+index = 0
+index_table <- Map<Parameter, index>
+has_nullptr = False
+for each config:
+  note: config is type of MaterializedPreCompiledTargetConfiguration
+  for row in config.table.rows:
+    for cell in row:
+      if cell.parameter.type_info.is_native:
+        cell.type_index = get type index from index_table
+      elif not has_nullptr and cell.value == None:
+        has_nullptr = True
+
+
+
+2. Make NativeTypeIndexMapping for all types
+generate common things
+  - pre processor
+  - header includes
+    - PcoTypeIndexSupport
+  - namespace open
+  - NativeTypeIndexMapping body
+    - templated get
+    - get nullptr type index -> return 0 if we has nullptr, either wise returns -7777777.
+
+for native_param in index_table:
+  gen each method body
+
+Ex: for int32_t
+template <>
+int32_t get(int32_t value) {
+  if (value == A) {
+    return 3;
+  } else if (value == B) {
+    return 4;
+  } ...
+
+  return -7777777;  // Not found
+}
+
+close namespace
+close pre-processor
+
+## 2. make type indices for objects
+destination: put generated files under `PreCompiledTargetBuildConfiguration::type_index_dir_name`
+class name: ObjectTypeIndexMapping
+
+1. Common:
+  - pre-processor
+  - includes
+    - PcoTypeIndexSupport
+  - namespace
+  - class body open: ObjectTypeIndexMapping
+
+2. Gen static integer type index variables.
+index = config.type_index_start
+index_table <- Map<Parameter, index>
+
+type index naming rule:
+"_".join(capital(namespace.split("::"))) + "_".join(splitPascalName(type_info.type_name))
+ex: aa::bb:cc:FooBar -> static constexpr int32_t AA_BB_CC_FOO_BAR = X;
+
+for each config:
+  note: config is type of MaterializedPreCompiledTargetConfiguration
+  for row in config.table.rows:
+    for cell in row:
+      if not cell.parameter.type_info.is_native
+         and cell.value != None:
+        cell.type_index = get type index from index_table
+        gen type index
+
+3. Finish header file.
+- closing class body
+- closing namespace
+- pre-processor closing
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

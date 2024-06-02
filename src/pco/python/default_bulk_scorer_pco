@@ -1,0 +1,19 @@
+﻿
+1. For aggregation:
+      util::ManagedPtr<Scorer> _scorer,
+      util::ManagedPtr<DocIdSetIterator> _iterator,
+      util::ManagedPtr<TwoPhaseIterator> _two_phase_iterator,
+      util::ManagedPtr<LeafAggregator> _leaf_aggregator,
+      util::ManagedPtr<util::Bits> _live_docs
+
+
+2. For searching:
+  - params
+     - util::ManagedPtr<DocIdSetIterator> _iterator,
+     - util::ManagedPtr<TwoPhaseIterator> _two_phase_iterator,
+       - nullable
+     - util::ManagedPtr<util::Bits> _live_docs
+       - nullable
+  - custom
+     - util::ManagedPtr<LeafCollector> _leaf_collector,
+     - util::ManagedPtr<Scorer> _scorer,
