@@ -5,7 +5,7 @@
 
 /* @(#) $Id$ */
 
-#include "ZlibCrc32.h"
+#include "ZLibCrc32.h"
 
 z_const char *const z_errmsg[10] = {
     (z_const char *) "need dictionary",     /* Z_NEED_DICT       2  */
