@@ -69,8 +69,6 @@ struct BooleanScorerOrCollector final : public LeafCollector, public DocIdStream
   bool needs_score;
   int32_t min_should_match;
   int32_t base_doc_id;
-  int32_t min_bitset_index;
-  int32_t collect_type;
 };  // OrCollector
 
 class BooleanScorer final : public BulkScorer {
@@ -161,37 +159,30 @@ class BooleanScorer final : public BulkScorer {
 
 template<typename DocIdConsumerType>
 void BooleanScorerOrCollectorReplayer<DocIdConsumerType>::for_each() {
-  if (or_collector->collect_type <= 3) {
-    // Use valid indices bit set + buckets.
-    for (int32_t i = or_collector->min_bitset_index; i < BS_INDICES_SET_SIZE; ++i) {
-      if (uint64_t bits = or_collector->valid_indices.vec[i]) {
-        const int32_t i64 = i * 64;
-        do {
-          const int32_t ntz = std::countr_zero(bits);
+  // Use valid indices bit set + buckets.
+  const bool has_bucket = or_collector->buckets.vec;
+  for (int32_t i = 0; i < BS_INDICES_SET_SIZE; ++i) {
+    if (uint64_t bits = or_collector->valid_indices.vec[i]) {
+      const int32_t i64 = i * 64;
+      do {
+        const int32_t ntz = std::countr_zero(bits);
+        if (has_bucket) {
           const int32_t bucket_index = i64 + ntz;
           or_collector->score_and_doc.score = (float) or_collector->buckets.vec[bucket_index].score;
           or_collector->score_and_doc.doc = or_collector->buckets.vec[bucket_index].doc_id;
           doc_id_consumer->collect_one_doc(or_collector->score_and_doc.doc);
-          bits ^= 1ULL << ntz;
           or_collector->buckets.vec[bucket_index].score = 0;
           or_collector->buckets.vec[bucket_index].freq = 0;
-        } while (bits);
-      }  // End if
-    }  // End for
-  } else {
-    // Only uses valid indices bit set.
-    for (int32_t i = 0; i < BS_INDICES_SET_SIZE; ++i) {
-      if (uint64_t bits = or_collector->valid_indices.vec[i]) {
-        const int32_t i64 = i * 64;
-        do {
-          const int32_t ntz = std::countr_zero(bits);
-          or_collector->score_and_doc.doc = or_collector->base_doc_id | i64 | ntz;
-          doc_id_consumer->collect_one_doc(or_collector->score_and_doc.doc);
           bits ^= 1ULL << ntz;
-        } while (bits);
-      }  // End if
-    }  // End for
-  }  // End if
+        } else {
+          const int32_t doc_id = or_collector->base_doc_id | (i << 6U) | ntz;
+          or_collector->score_and_doc.doc = doc_id;
+          doc_id_consumer->collect_one_doc(doc_id);
+          bits ^= 1ULL << ntz;
+        }
+      } while (bits);
+    }  // End if
+  }  // End for
 }
 
 }  // lucene::cyborg::search::query

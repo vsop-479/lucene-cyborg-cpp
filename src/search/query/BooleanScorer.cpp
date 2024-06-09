@@ -254,82 +254,34 @@ BooleanScorerOrCollector::BooleanScorerOrCollector(ManagedPtr<SearchContext> _sr
       DocIdStream(),
       parent_collector(_parent_collector),
       srch_context(_srch_context),
+      buckets(),
       score_and_doc(),
       needs_score(_needs_score),
       min_should_match(_min_should_match),
-      base_doc_id(),
-      min_bitset_index(),
-      collect_type() {
-  buckets.vec = _srch_context->linear_allocator->allocate_objects<Bucket>(BS_BUCKET_LIST_SIZE);
-  buckets.len = BS_BUCKET_LIST_SIZE;
+      base_doc_id() {
+  if (_needs_score || _min_should_match > 1) {
+    buckets.vec = _srch_context->linear_allocator->allocate_objects<Bucket>(BS_BUCKET_LIST_SIZE);
+    buckets.len = BS_BUCKET_LIST_SIZE;
+  }
   valid_indices.vec = _srch_context->linear_allocator->allocate_objects<uint64_t>(BS_INDICES_SET_SIZE);
   valid_indices.len = BS_INDICES_SET_SIZE;
-
-  if (needs_score) {
-    if (min_should_match == 1) {
-      collect_type = 0;
-    } else {
-      collect_type = 1;
-    }
-  } else {
-    if (min_should_match > 1) {
-      collect_type = 2;
-    } else {
-      collect_type = 3;
-    }
-  }  // End if
 }
 
 void BooleanScorerOrCollector::collect_one_doc(int32_t doc_id) {
   const uint32_t bucket_index = ((uint32_t) doc_id) & BS_MASK;
   const int32_t bitset_index = bucket_index >> 6U;
-  if (bitset_index < min_bitset_index) {
-    min_bitset_index = bitset_index;
-  }
+  valid_indices.vec[bitset_index] |= (uint64_t(1) << (bucket_index & 63U));
 
-  switch (collect_type) {
-    case 0: {
-      // needs score + (msm == 1)
-      valid_indices.vec[bitset_index] |= (uint64_t(1) << (bucket_index & 63U));
-      auto &bucket = buckets.vec[bucket_index];
+  if (buckets.vec) {
+    auto &bucket = buckets.vec[bucket_index];
+    bucket.freq += 1;
+    if (needs_score) {
       bucket.score += scorer->get_score();
-      bucket.doc_id = doc_id;
-      return;
     }
-    case 1: {
-      // needs score + (msm > 1)
-      auto &bucket = buckets.vec[bucket_index];
-      bucket.score += scorer->get_score();
-      bucket.freq += 1;
-      if (bucket.freq == min_should_match) {
-        valid_indices.vec[bitset_index] |= (uint64_t(1) << (bucket_index & 63U));
-        bucket.doc_id = doc_id;
-      }
-      return;
-    }
-    case 2: {
-      // no score + (msm > 1)
-      auto &bucket = buckets.vec[bucket_index];
-      bucket.freq += 1;
-      if (bucket.freq == min_should_match) {
-        valid_indices.vec[bitset_index] |= (uint64_t(1) << (bucket_index & 63U));
-      }
-      return;
-    }
-    case 3: {
-      // no score + (msm == 1)
-      valid_indices.vec[bitset_index] |= (uint64_t(1) << (bucket_index & 63U));
-      return;
-    }
-    default: {
-      // TODO
-      throw 13;
-    }
-  }  // End switch
+  }  // End if
 }
 
 void BooleanScorerOrCollector::prepare_collecting_multiple_sources(int32_t _base_doc_id) {
-  min_bitset_index = std::numeric_limits<int32_t>::max();
   base_doc_id = _base_doc_id;
 
   MemoryUtils::memset(valid_indices.vec, 0, sizeof(uint64_t) * BS_INDICES_SET_SIZE);
@@ -349,7 +301,7 @@ int32_t BooleanScorerOrCollector::count() {
   } else {
     int32_t count = 0;
 
-    for (int32_t i = min_bitset_index; i < BS_INDICES_SET_SIZE; ++i) {
+    for (int32_t i = 0; i < BS_INDICES_SET_SIZE; ++i) {
       LC_PREFETCH(&valid_indices.vec[i], 0, 0);
       count += std::popcount(valid_indices.vec[i]);
     }
