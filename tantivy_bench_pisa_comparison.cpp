@@ -56,7 +56,7 @@ struct Cursor {
   ManagedPtr<Lucene90PostingsEnum<IndexOptions::DOCS_AND_FREQS>> postings_enum;
 };  // Cursor
 
-int32_t disjunction(LVector<Cursor> &cursors) {
+int32_t disjunction_pisa(LVector<Cursor> &cursors) {
   int32_t min_doc_id = DocIdSetIterator::NO_MORE_DOCS;
   for (auto &cursor : cursors) {
     if (auto doc_id = cursor.postings_enum->next_doc(); doc_id < min_doc_id) {
@@ -77,6 +77,61 @@ int32_t disjunction(LVector<Cursor> &cursors) {
       next_doc = std::min(next_doc, cursor.postings_enum->get_doc_id());
     }
     cur_doc = next_doc;
+  }  // End while
+
+  return cnt;
+}
+
+int32_t disjunction_tantivy(LVector<Cursor> &cursors, ManagedPtr<LinearAllocator> allocator) {
+  int32_t cnt = 0;
+  static constexpr int32_t WINDOW_SIZE = 4096;
+  static constexpr int32_t BITSET_BLOCK_SIZE = 64;
+  static constexpr int32_t BITSET_BLOCK_MASK = BITSET_BLOCK_SIZE - 1;
+  static constexpr int32_t BITSET_SIZE = WINDOW_SIZE / BITSET_BLOCK_SIZE;
+  auto bitset = (uint64_t *) allocator->aligned_allocate(WINDOW_SIZE / 8);
+
+  // Advance all iterators
+  for (auto &cursor : cursors) {
+    cursor.postings_enum->next_doc();
+  }
+
+  while (cursors.size()) {
+    int32_t min_doc_id = DocIdSetIterator::NO_MORE_DOCS;
+    for (int32_t i = 0; i < cursors.size();) {
+      const auto doc_id = cursors[i].postings_enum->get_doc_id();
+      if (doc_id == DocIdSetIterator::NO_MORE_DOCS) {
+        cursors[i] = std::move(cursors[cursors.size() - 1]);
+        cursors.pop_back();
+        continue;
+      }
+      if (doc_id < min_doc_id) {
+        min_doc_id = doc_id;
+      }
+      ++i;
+    }
+
+    if (min_doc_id == DocIdSetIterator::NO_MORE_DOCS) {
+      return cnt;
+    }
+
+    const int32_t until = min_doc_id + WINDOW_SIZE;
+    for (auto &cursor : cursors) {
+      while (true) {
+        const auto doc_id = cursor.postings_enum->get_doc_id();
+        if (doc_id < until) {
+          const auto rebased_doc_id = doc_id - min_doc_id;
+          bitset[rebased_doc_id / BITSET_BLOCK_SIZE] |= 1ULL << (rebased_doc_id & BITSET_BLOCK_MASK);
+          cursor.postings_enum->next_doc();
+        } else {
+          break;
+        }
+      }
+    }  // End for
+
+    for (int32_t i = 0; i < BITSET_SIZE; ++i) {
+      cnt += std::popcount(bitset[i]);
+      bitset[i] = 0;
+    }
   }  // End while
 
   return cnt;
@@ -133,7 +188,7 @@ int main() {
   std::string index_path = "./reordered_idx";
 
   // TMP
-//  index_path = "C:\\Users\\ipxds\\workspace\\lucene-cyborg-search-benchmark-game\\engines\\lucene-9.8.0-reordered\\idx";
+  // std::string index_path = "C:\\Users\\ipxds\\workspace\\lucene-cyborg-search-benchmark-game\\engines\\lucene-9.8.0-reordered\\idx";
   // TMP
 
   MMapDirectoryPtr dir = std::make_shared<MMapDirectory>(index_path);
@@ -147,7 +202,7 @@ int main() {
   std::string line;
   while (std::getline(std::cin, line)) {
 //  while (true) {
-//    line = "COUNT\t+griffith +observatory";
+//    line = "COUNT\tstate of louisiana";
 
     std::string_view read_line = line;
     int i = 0;
@@ -191,7 +246,7 @@ int main() {
         const auto cnt = conjunction(cursors);
         std::cout << cnt << '\n';
       } else {
-        const auto cnt = disjunction(cursors);
+        const auto cnt = disjunction_tantivy(cursors, &allocator);
         std::cout << cnt << '\n';
       }
     } else {
