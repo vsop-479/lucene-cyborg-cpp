@@ -88,7 +88,7 @@ int32_t disjunction_tantivy(LVector<Cursor> &cursors, ManagedPtr<LinearAllocator
   static constexpr int32_t BITSET_BLOCK_SIZE = 64;
   static constexpr int32_t BITSET_BLOCK_MASK = BITSET_BLOCK_SIZE - 1;
   static constexpr int32_t BITSET_SIZE = WINDOW_SIZE / BITSET_BLOCK_SIZE;
-  auto bitset = (uint64_t *) allocator->aligned_allocate(WINDOW_SIZE / 8);
+  auto bitset = (uint64_t *) allocator->aligned_allocate(WINDOW_SIZE / BITSET_BLOCK_SIZE);
 
   // Advance all iterators
   for (auto &cursor : cursors) {
@@ -97,18 +97,12 @@ int32_t disjunction_tantivy(LVector<Cursor> &cursors, ManagedPtr<LinearAllocator
 
   while (cursors.size()) {
     int32_t min_doc_id = DocIdSetIterator::NO_MORE_DOCS;
-    for (int32_t i = 0; i < cursors.size();) {
-      const auto doc_id = cursors[i].postings_enum->get_doc_id();
-      if (doc_id == DocIdSetIterator::NO_MORE_DOCS) {
-        cursors[i] = std::move(cursors[cursors.size() - 1]);
-        cursors.pop_back();
-        continue;
-      }
+    for (auto& cursor : cursors) {
+      const auto doc_id = cursor.postings_enum->get_doc_id();
       if (doc_id < min_doc_id) {
         min_doc_id = doc_id;
       }
-      ++i;
-    }
+    }  // End if
 
     if (min_doc_id == DocIdSetIterator::NO_MORE_DOCS) {
       return cnt;
