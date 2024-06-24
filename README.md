@@ -2,6 +2,8 @@
 
 This repository ported Lucene 9.8.0 search functionality in C++.
 At the moment, not all the features are available in this repository.
+According to [benchmark](https://github.com/0ctopus13prime/lucene-cyborg-search-benchmark-game), it shows roughly 25% faster performance than Lucene-9.8.0 conjunction case, but it shows 4%-32% slower performance for disjunction case.
+For more details, please refer to [paper](https://github.com/0ctopus13prime/lucene-cyborg-paper)
 
 Example:
 ```
@@ -56,3 +58,6 @@ for (int32_t i = 0; i < result.score_docs.size(); ++i) {
 }
    
 ```
+
+# Other repositories
+- [lucene-cyborg-java](https://github.com/0ctopus13prime/lucene-cyborg-java)
